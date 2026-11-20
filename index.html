@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <title>Mind Fog — Generative Resonance</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <style>body{background:#020617;margin:0;font-family:ui-monospace,monospace}input[type=range]{accent-color:#3b82f6}</style>
+  <style>body{background:#020617;margin:0;font-family:ui-monospace,monospace}</style>
 </head>
 <body>
 <div id="app" class="min-h-screen flex items-center justify-center p-4 text-slate-200"></div>
@@ -14,13 +14,7 @@ const CLIPS = [
 ];
 
 const app = document.getElementById('app');
-let audio, playing = false, recording = false, mediaRecorder, chunks = [], wavUrl = null, seconds = 0, timer;
-let analyser, ctx;
-
-function log(msg) {
-  const el = document.getElementById('log');
-  if (el) el.textContent = msg;
-}
+let audio, playing = false, recording = false, mediaRecorder, chunks = [], downloadUrl = null, seconds = 0, timer, analyser, ctx;
 
 async function start() {
   if (!audio) {
@@ -44,7 +38,7 @@ async function start() {
   render();
 }
 
-function stop() {
+function stopAll() {
   if (audio) audio.pause();
   playing = false;
   stopRecording();
@@ -60,19 +54,21 @@ function startRecording() {
   mediaRecorder.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
   mediaRecorder.onstop = () => {
     const blob = new Blob(chunks, { type: 'audio/webm' });
-    if (wavUrl) URL.revokeObjectURL(wavUrl);
-    wavUrl = URL.createObjectURL(blob);
+    if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+    downloadUrl = URL.createObjectURL(blob);
     recording = false;
     render();
   };
   mediaRecorder.start();
   recording = true;
   seconds = 0;
-  timer = setInterval(() => { seconds++; render(); }, 1000);
+  timer = setInterval(() => { seconds++; const el = document.getElementById('timer'); if (el) el.textContent = seconds + 's'; }, 1000);
 }
 
 function stopRecording() {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
   if (timer) clearInterval(timer);
   recording = false;
 }
@@ -83,42 +79,34 @@ function render() {
     <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
       <div>
         <h1 class="text-xl font-bold text-white">Mind Fog Resonance</h1>
-        <p class="text-xs text-slate-400">ElevenLabs ambient stream</p>
+        <p class="text-xs text-slate-400">Ambient stream with recording</p>
       </div>
       <div class="flex flex-wrap gap-2 items-center text-xs">
         <span class="px-3 py-1.5 rounded-lg border border-slate-700">${playing ? 'playing' : 'idle'}</span>
         <button id="play" class="px-3 py-1.5 rounded-xl font-semibold ${playing ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'bg-blue-600 text-white'}">${playing ? 'Suspend' : 'Initiate'}</button>
         <button id="stop" class="px-2 py-1.5 rounded-xl bg-slate-800 border border-slate-700">■</button>
-        ${recording ? `<span class="text-red-300 animate-pulse">● ${seconds}s</span>` : ''}
-        ${wavUrl && !recording ? `<a href="${wavUrl}" download="mind-fog.webm" class="px-2.5 py-1 rounded-lg bg-emerald-600 text-white">Download</a>` : ''}
+        ${recording ? `<span id="timer" class="text-red-300 animate-pulse">● ${seconds}s</span>` : ''}
+        ${downloadUrl ? `<a href="${downloadUrl}" download="mind-fog.webm" class="px-2.5 py-1 rounded-lg bg-emerald-600 text-white">Download</a>` : ''}
       </div>
     </div>
 
-    <div class="grid md:grid-cols-12 gap-6">
-      <div class="md:col-span-7">
-        <div class="relative h-56 bg-slate-950 rounded-xl border border-slate-800 overflow-hidden">
-          <canvas id="viz" width="500" height="220" class="w-full h-full"></canvas>
-          <div class="absolute top-3 left-3 text-[10px] text-slate-500 uppercase tracking-widest">Resonance Topology</div>
-        </div>
-      </div>
-      <div class="md:col-span-5 flex flex-col gap-3">
-        <div class="p-3 bg-slate-950/80 border border-slate-800 rounded-xl text-[11px] text-slate-400">
-          <div class="text-[10px] text-slate-500 uppercase mb-1">Log</div>
-          <div id="log">${playing ? 'Streaming ambient clip' : 'Click Initiate'}</div>
-        </div>
-        <div class="text-[10px] text-slate-500">Source: ElevenLabs eleven_music_v2_5<br>Recording captures the live output</div>
-      </div>
+    <div class="relative h-56 bg-slate-950 rounded-xl border border-slate-800 overflow-hidden">
+      <canvas id="viz" width="500" height="220" class="w-full h-full"></canvas>
+      <div class="absolute top-3 left-3 text-[10px] text-slate-500 uppercase tracking-widest">Resonance Topology</div>
     </div>
 
-    <div class="p-4 bg-slate-950/90 border border-slate-800 rounded-xl flex justify-between text-xs">
-      <div>${recording ? `Capturing ${seconds}s` : wavUrl ? 'Recording ready' : 'Capture starts on Initiate'}</div>
-      ${recording ? '<button id="finish" class="px-3 py-1.5 bg-red-600 rounded-lg text-white">Finish</button>' : ''}
+    <div class="p-4 bg-slate-950/90 border border-slate-800 rounded-xl flex flex-wrap items-center justify-between gap-3 text-xs">
+      <div>${recording ? 'Recording… click Finish to get the download' : downloadUrl ? 'Recording ready — click Download' : 'Click Initiate to start and record'}</div>
+      <div class="flex gap-2">
+        ${recording ? '<button id="finish" class="px-3 py-1.5 bg-red-600 rounded-lg text-white">Finish</button>' : ''}
+        ${downloadUrl ? `<a href="${downloadUrl}" download="mind-fog.webm" class="px-3 py-1.5 bg-emerald-600 rounded-lg text-white">Download</a>` : ''}
+      </div>
     </div>
   </div>`;
 
-  document.getElementById('play').onclick = () => playing ? stop() : start();
-  document.getElementById('stop').onclick = stop;
-  document.getElementById('finish')?.addEventListener('click', stopRecording);
+  document.getElementById('play').onclick = () => playing ? stopAll() : start();
+  document.getElementById('stop').onclick = stopAll;
+  document.getElementById('finish')?.addEventListener('click', () => { stopRecording(); });
   drawViz();
 }
 
