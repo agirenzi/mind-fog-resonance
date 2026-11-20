@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Mind Fog — Generative Resonance</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: #020617; margin: 0; font-family: ui-monospace, monospace; }
+    input[type=range] { accent-color: #3b82f6; }
+  </style>
+</head>
+<body>
+<div id="app" class="min-h-screen flex items-center justify-center p-4 text-slate-200"></div>
+
+<script>
+const PRESETS = [
+  {
+    name: "Null Space",
+    desc: "Sparse drifting sines, soft noise bed, no pulse",
+    density: 0.32,
+    brightness: 0.26,
+    voiceCount: 3,
+    noise: 0.4,
+    drift: 0.8
+  },
+  {
+    name: "Kora & Cello",
+    desc: "Slow bowed partials with gentle plucked attacks",
+    density: 0.48,
+    brightness: 0.34,
+    voiceCount: 4,
+    noise: 0.15,
+    drift: 0.5
+  },
+  {
+    name: "Wind & Bowls",
+    desc: "Breathy lowpass tones and high ringing partials",
+    density: 0.38,
+    brightness: 0.22,
+    voiceCount: 5,
+    noise: 0.55,
+    drift: 1.1
+  },
+  {
+    name: "Felt Piano",
+    desc: "Soft decaying partials with warm tape hiss",
+    density: 0.42,
+    brightness: 0.31,
+    voiceCount: 4,
+    noise: 0.25,
+    drift: 0.3
+  }
+];
+
+const WORKLET = `
+class CaptureProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.active = true;
+    this.port.onmessage = e => { if (e.data === "stop") this.active = false; };
+  }
+  process(inputs) {
+    if (!this.active) return false;
+    const ch = inputs[0]?.[0];
+    if (ch?.length) {
+      const copy = new Float32Array(ch);
+      this.port.postMessage(copy, [copy.buffer]);
+    }
+    return true;
+  }
+}
+registerProcessor("capture", CaptureProcessor);
+`;
+
+function encodeWav(chunks, sampleRate) {
+  const length = chunks.reduce((n, c) => n + c.length, 0);
+  const buffer = new ArrayBuffer(44 + length * 2);
+  const view = new DataView(buffer);
+  const write = (offset, str) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+  write(0, "RIFF");
+  view.setUint32(4, 36 + length * 2, true);
+  write(8, "WAVE");
+  write(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  write(36, "data");
+  view.setUint32(40, length * 2, true);
+  let offset = 44;
+  for (const chunk of chunks) {
+    for (let i = 0; i < chunk.length; i++) {
+      const s = Math.max(-1, Math.min(1, chunk[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      offset += 2;
+    }
+  }
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+class ResonanceEngine {
+  constructor(ctx, analyser) {
+    this.ctx = ctx;
+    this.analyser = analyser;
+    this.voices = [];
+    this.noise = null;
+    this.master = ctx.createGain();
+    this.master.gain.value = 0.2;
+    this.master.connect(analyser);
+    this.running = false;
+  }
+
+  start(preset) {
+    this.stop();
+    const { density, brightness, voiceCount, noise, drift } = preset;
+    const baseFreqs = [55, 82.41, 110, 164.81, 220, 277.18, 329.63, 440];
+
+    for (let i = 0; i < voiceCount; i++) {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      const filter = this.ctx.createBiquadFilter();
+      const lfo = this.ctx.createOscillator();
+      const lfoGain = this.ctx.createGain();
+
+      osc.type = brightness > 0.3 ? "triangle" : "sine";
+      const base = baseFreqs[i % baseFreqs.length];
+      osc.frequency.value = base * (0.97 + Math.random() * 0.06);
+
+      const target = base * (0.94 + Math.random() * 0.12);
+      osc.frequency.linearRampToValueAtTime(target, this.ctx.currentTime + 12 + Math.random() * 8);
+
+      filter.type = "lowpass";
+      filter.frequency.value = 280 + brightness * 3200;
+      filter.Q.value = 0.4 + density * 0.6;
+
+      gain.gain.value = 0.025 + Math.random() * 0.035 * (1 - density * 0.2);
+
+      lfo.frequency.value = 0.03 + Math.random() * 0.07 * drift;
+      lfoGain.gain.value = 0.008 + Math.random() * 0.012;
+      lfo.connect(lfoGain);
+      lfoGain.connect(gain.gain);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.master);
+
+      osc.start();
+      lfo.start();
+      this.voices.push({ osc, lfo, gain, filter });
+    }
+
+    if (noise > 0.1) {
+      const bufferSize = this.ctx.sampleRate * 3;
+      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * 0.4;
+      const src = this.ctx.createBufferSource();
+      src.buffer = buffer;
+      src.loop = true;
+      const ng = this.ctx.createGain();
+      ng.gain.value = 0.012 * noise * density;
+      const nf = this.ctx.createBiquadFilter();
+      nf.type = "lowpass";
+      nf.frequency.value = 600 + brightness * 800;
+      src.connect(nf);
+      nf.connect(ng);
+      ng.connect(this.master);
+      src.start();
+      this.noise = src;
+    }
+
+    this.running = true;
+  }
+
+  setBrightness(b) {
+    this.voices.forEach(v => {
+      v.filter.frequency.setTargetAtTime(280 + b * 3200, this.ctx.currentTime, 0.4);
+    });
+  }
+
+  stop() {
+    this.voices.forEach(v => {
+      try { v.osc.stop(); v.lfo.stop(); } catch {}
+    });
+    if (this.noise) {
+      try { this.noise.stop(); } catch {}
+    }
+    this.voices = [];
+    this.noise = null;
+    this.running = false;
+  }
+}
+
+const app = document.getElementById("app");
+let ctx, analyser, engine, workletNode, chunks = [], timer, recording = false, seconds = 0, wavUrl = null;
+let activePreset = 0;
+let density = PRESETS[0].density;
+let brightness = PRESETS[0].brightness;
+const logLines = ["Engine idle.", "Worklet capture ready."];
+
+function log(msg) {
+  logLines.unshift(msg);
+  if (logLines.length > 6) logLines.pop();
+  render();
+}
+
+async function ensureContext() {
+  if (!ctx) {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.82;
+    analyser.connect(ctx.destination);
+    engine = new ResonanceEngine(ctx, analyser);
+
+    const blob = new Blob([WORKLET], { type: "application/javascript" });
+    const url = URL.createObjectURL(blob);
+    await ctx.audioWorklet.addModule(url);
+    URL.revokeObjectURL(url);
+  }
+  if (ctx.state === "suspended") await ctx.resume();
+}
+
+async function start() {
+  await ensureContext();
+  engine.start({ ...PRESETS[activePreset], density, brightness });
+  startCapture();
+  log("[Resonance] live");
+  render();
+}
+
+function pause() {
+  if (engine) engine.stop();
+  stopCapture();
+  log("[Suspended]");
+  render();
+}
+
+function startCapture() {
+  if (workletNode || !analyser) return;
+  chunks = [];
+  workletNode = new AudioWorkletNode(ctx, "capture");
+  workletNode.port.onmessage = e => { if (e.data) chunks.push(e.data); };
+  analyser.connect(workletNode);
+  workletNode.connect(ctx.destination);
+  recording = true;
+  seconds = 0;
+  timer = setInterval(() => { seconds++; render(); }, 1000);
+}
+
+function stopCapture() {
+  if (!workletNode) return;
+  workletNode.port.postMessage("stop");
+  try { analyser.disconnect(workletNode); workletNode.disconnect(); } catch {}
+  workletNode = null;
+  if (timer) clearInterval(timer);
+  if (chunks.length) {
+    const blob = encodeWav(chunks, ctx.sampleRate);
+    if (wavUrl) URL.revokeObjectURL(wavUrl);
+    wavUrl = URL.createObjectURL(blob);
+    log("[WAV] ready for download");
+  }
+  recording = false;
+  chunks = [];
+}
+
+function selectPreset(i) {
+  activePreset = i;
+  density = PRESETS[i].density;
+  brightness = PRESETS[i].brightness;
+  if (engine?.running) engine.start({ ...PRESETS[i], density, brightness });
+  log(`[Preset] ${PRESETS[i].name}`);
+  render();
+}
+
+function render() {
+  const p = PRESETS[activePreset];
+  app.innerHTML = `
+    <div class="w-full max-w-4xl bg-slate-900/90 border border-slate-800 rounded-2xl p-6 flex flex-col gap-6">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
+        <div>
+          <h1 class="text-xl font-bold text-white">Mind Fog Resonance</h1>
+          <p class="text-xs text-slate-400">Procedural zero-grid acoustic space</p>
+        </div>
+        <div class="flex flex-wrap gap-2 items-center text-xs">
+          <span class="px-3 py-1.5 rounded-lg border border-slate-700">${engine?.running ? "playing" : "idle"}</span>
+          <button id="play" class="px-3 py-1.5 rounded-xl font-semibold ${engine?.running ? "bg-amber-500/20 text-amber-300 border border-amber-500/40" : "bg-blue-600 text-white"}">${engine?.running ? "Suspend" : "Initiate"}</button>
+          <button id="stop" class="px-2 py-1.5 rounded-xl bg-slate-800 border border-slate-700">■</button>
+          ${recording ? `<span class="text-red-300 animate-pulse">● ${seconds}s</span>` : ""}
+          ${wavUrl && !recording ? `<a href="${wavUrl}" download="mind-fog.wav" class="px-2.5 py-1 rounded-lg bg-emerald-600 text-white">Download WAV</a>` : ""}
+        </div>
+      </div>
+
+      <div class="grid md:grid-cols-12 gap-6">
+        <div class="md:col-span-7 flex flex-col gap-4">
+          <div class="relative h-56 bg-slate-950 rounded-xl border border-slate-800 overflow-hidden">
+            <canvas id="viz" width="500" height="220" class="w-full h-full"></canvas>
+            <div class="absolute top-3 left-3 text-[10px] text-slate-500 uppercase tracking-widest">Resonance Topology</div>
+          </div>
+          <div>
+            <div class="text-xs text-slate-400 uppercase tracking-wider mb-2">Presets</div>
+            <div class="grid grid-cols-2 gap-2">
+              ${PRESETS.map((pr, i) => `
+                <button data-preset="${i}" class="p-3 rounded-xl border text-left text-xs ${i === activePreset ? "bg-blue-950/50 border-blue-500/60" : "bg-slate-950/40 border-slate-800"}">
+                  <div class="font-semibold text-white mb-1">✦ ${pr.name}</div>
+                  <div class="text-[10px] text-slate-400">${pr.desc}</div>
+                </button>
+              `).join("")}
+            </div>
+          </div>
+        </div>
+        <div class="md:col-span-5 flex flex-col gap-3">
+          <div class="text-xs text-slate-400 uppercase">Parameters</div>
+          <div class="p-3 bg-slate-950/60 border border-slate-800 rounded-xl">
+            <div class="flex justify-between text-xs mb-1"><span>Density</span><span class="text-blue-400">${Math.round(density * 100)}%</span></div>
+            <input id="density" type="range" min="0.1" max="0.8" step="0.02" value="${density}" class="w-full">
+          </div>
+          <div class="p-3 bg-slate-950/60 border border-slate-800 rounded-xl">
+            <div class="flex justify-between text-xs mb-1"><span>Brightness</span><span class="text-blue-400">${Math.round((brightness / 0.45) * 100)}%</span></div>
+            <input id="bright" type="range" min="0.1" max="0.45" step="0.01" value="${brightness}" class="w-full">
+          </div>
+          <div class="p-3 bg-slate-950/80 border border-slate-800 rounded-xl text-[11px] text-slate-400">
+            <div class="text-[10px] text-slate-500 uppercase mb-1">Log</div>
+            ${logLines.map(l => `<div class="truncate">&gt; ${l}</div>`).join("")}
+          </div>
+        </div>
+      </div>
+
+      <div class="p-4 bg-slate-950/90 border border-slate-800 rounded-xl flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div>${recording ? `Capturing ${seconds}s` : wavUrl ? "WAV ready" : "Capture arms on initiate"}</div>
+        <div class="flex gap-2">
+          ${recording ? `<button id="finish" class="px-3 py-1.5 bg-red-600 rounded-lg text-white">Finish</button>` : ""}
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("play").onclick = () => engine?.running ? pause() : start();
+  document.getElementById("stop").onclick = () => { pause(); log("[Stopped]"); };
+  document.getElementById("finish")?.addEventListener("click", stopCapture);
+  document.querySelectorAll("[data-preset]").forEach(btn => {
+    btn.onclick = () => selectPreset(+btn.dataset.preset);
+  });
+  document.getElementById("density").oninput = e => {
+    density = +e.target.value;
+    if (engine?.running) engine.start({ ...PRESETS[activePreset], density, brightness });
+    render();
+  };
+  document.getElementById("bright").oninput = e => {
+    brightness = +e.target.value;
+    if (engine) engine.setBrightness(brightness);
+    render();
+  };
+
+  drawViz();
+}
+
+function drawViz() {
+  const canvas = document.getElementById("viz");
+  if (!canvas || !analyser) return;
+  const c = canvas.getContext("2d");
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  function frame() {
+    requestAnimationFrame(frame);
+    c.fillStyle = "rgba(10,14,23,0.3)";
+    c.fillRect(0, 0, canvas.width, canvas.height);
+    analyser.getByteFrequencyData(data);
+    const cx = canvas.width / 2, cy = canvas.height / 2;
+    c.lineWidth = 1.5;
+    for (let ring = 0; ring < 3; ring++) {
+      c.beginPath();
+      const base = 38 + ring * 30;
+      for (let i = 0; i < 72; i++) {
+        const ang = (i / 72) * Math.PI * 2;
+        const v = data[i % data.length] / 255;
+        const r = base + v * (16 + ring * 10);
+        const x = cx + Math.cos(ang) * r;
+        const y = cy + Math.sin(ang) * r;
+        i === 0 ? c.moveTo(x, y) : c.lineTo(x, y);
+      }
+      c.closePath();
+      c.strokeStyle = ["rgba(147,197,253,0.7)", "rgba(192,132,252,0.4)", "rgba(94,234,212,0.25)"][ring];
+      c.stroke();
+    }
+  }
+  frame();
+}
+
+render();
+</script>
+</body>
+</html>
