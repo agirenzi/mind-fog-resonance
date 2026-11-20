@@ -14,42 +14,10 @@
 
 <script>
 const PRESETS = [
-  {
-    name: "Null Space",
-    desc: "Sparse drifting sines, soft noise bed, no pulse",
-    density: 0.32,
-    brightness: 0.26,
-    voiceCount: 3,
-    noise: 0.4,
-    drift: 0.8
-  },
-  {
-    name: "Kora & Cello",
-    desc: "Slow bowed partials with gentle plucked attacks",
-    density: 0.48,
-    brightness: 0.34,
-    voiceCount: 4,
-    noise: 0.15,
-    drift: 0.5
-  },
-  {
-    name: "Wind & Bowls",
-    desc: "Breathy lowpass tones and high ringing partials",
-    density: 0.38,
-    brightness: 0.22,
-    voiceCount: 5,
-    noise: 0.55,
-    drift: 1.1
-  },
-  {
-    name: "Felt Piano",
-    desc: "Soft decaying partials with warm tape hiss",
-    density: 0.42,
-    brightness: 0.31,
-    voiceCount: 4,
-    noise: 0.25,
-    drift: 0.3
-  }
+  { name: "Null Space", desc: "Sparse drifting sines, soft noise bed, no pulse", density: 0.32, brightness: 0.26, voiceCount: 3, noise: 0.4, drift: 0.8 },
+  { name: "Kora & Cello", desc: "Slow bowed partials with gentle plucked attacks", density: 0.48, brightness: 0.34, voiceCount: 4, noise: 0.15, drift: 0.5 },
+  { name: "Wind & Bowls", desc: "Breathy lowpass tones and high ringing partials", density: 0.38, brightness: 0.22, voiceCount: 5, noise: 0.55, drift: 1.1 },
+  { name: "Felt Piano", desc: "Soft decaying partials with warm tape hiss", density: 0.42, brightness: 0.31, voiceCount: 4, noise: 0.25, drift: 0.3 }
 ];
 
 const WORKLET = `
@@ -76,22 +44,13 @@ function encodeWav(chunks, sampleRate) {
   const length = chunks.reduce((n, c) => n + c.length, 0);
   const buffer = new ArrayBuffer(44 + length * 2);
   const view = new DataView(buffer);
-  const write = (offset, str) => {
-    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
-  };
-  write(0, "RIFF");
-  view.setUint32(4, 36 + length * 2, true);
-  write(8, "WAVE");
-  write(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  write(36, "data");
-  view.setUint32(40, length * 2, true);
+  const write = (offset, str) => { for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); };
+  write(0, "RIFF"); view.setUint32(4, 36 + length * 2, true);
+  write(8, "WAVE"); write(12, "fmt ");
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  write(36, "data"); view.setUint32(40, length * 2, true);
   let offset = 44;
   for (const chunk of chunks) {
     for (let i = 0; i < chunk.length; i++) {
@@ -110,7 +69,7 @@ class ResonanceEngine {
     this.voices = [];
     this.noise = null;
     this.master = ctx.createGain();
-    this.master.gain.value = 0.2;
+    this.master.gain.value = 0.65;
     this.master.connect(analyser);
     this.running = false;
   }
@@ -118,7 +77,7 @@ class ResonanceEngine {
   start(preset) {
     this.stop();
     const { density, brightness, voiceCount, noise, drift } = preset;
-    const baseFreqs = [55, 82.41, 110, 164.81, 220, 277.18, 329.63, 440];
+    const baseFreqs = [110, 164.81, 220, 277.18, 329.63, 440, 554.37, 659.25];
 
     for (let i = 0; i < voiceCount; i++) {
       const osc = this.ctx.createOscillator();
@@ -129,19 +88,17 @@ class ResonanceEngine {
 
       osc.type = brightness > 0.3 ? "triangle" : "sine";
       const base = baseFreqs[i % baseFreqs.length];
-      osc.frequency.value = base * (0.97 + Math.random() * 0.06);
-
-      const target = base * (0.94 + Math.random() * 0.12);
-      osc.frequency.linearRampToValueAtTime(target, this.ctx.currentTime + 12 + Math.random() * 8);
+      osc.frequency.value = base * (0.98 + Math.random() * 0.04);
+      osc.frequency.linearRampToValueAtTime(base * (0.95 + Math.random() * 0.1), this.ctx.currentTime + 10 + Math.random() * 6);
 
       filter.type = "lowpass";
-      filter.frequency.value = 280 + brightness * 3200;
-      filter.Q.value = 0.4 + density * 0.6;
+      filter.frequency.value = 800 + brightness * 4000;
+      filter.Q.value = 0.5;
 
-      gain.gain.value = 0.025 + Math.random() * 0.035 * (1 - density * 0.2);
+      gain.gain.value = 0.08 + Math.random() * 0.06;
 
-      lfo.frequency.value = 0.03 + Math.random() * 0.07 * drift;
-      lfoGain.gain.value = 0.008 + Math.random() * 0.012;
+      lfo.frequency.value = 0.04 + Math.random() * 0.08 * drift;
+      lfoGain.gain.value = 0.02;
       lfo.connect(lfoGain);
       lfoGain.connect(gain.gain);
 
@@ -155,18 +112,18 @@ class ResonanceEngine {
     }
 
     if (noise > 0.1) {
-      const bufferSize = this.ctx.sampleRate * 3;
+      const bufferSize = this.ctx.sampleRate * 2;
       const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
       const data = buffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * 0.4;
+      for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * 0.5;
       const src = this.ctx.createBufferSource();
       src.buffer = buffer;
       src.loop = true;
       const ng = this.ctx.createGain();
-      ng.gain.value = 0.012 * noise * density;
+      ng.gain.value = 0.04 * noise;
       const nf = this.ctx.createBiquadFilter();
       nf.type = "lowpass";
-      nf.frequency.value = 600 + brightness * 800;
+      nf.frequency.value = 1200;
       src.connect(nf);
       nf.connect(ng);
       ng.connect(this.master);
@@ -179,17 +136,13 @@ class ResonanceEngine {
 
   setBrightness(b) {
     this.voices.forEach(v => {
-      v.filter.frequency.setTargetAtTime(280 + b * 3200, this.ctx.currentTime, 0.4);
+      if (v.filter) v.filter.frequency.setTargetAtTime(800 + b * 4000, this.ctx.currentTime, 0.3);
     });
   }
 
   stop() {
-    this.voices.forEach(v => {
-      try { v.osc.stop(); v.lfo.stop(); } catch {}
-    });
-    if (this.noise) {
-      try { this.noise.stop(); } catch {}
-    }
+    this.voices.forEach(v => { try { v.osc.stop(); v.lfo.stop(); } catch {} });
+    if (this.noise) { try { this.noise.stop(); } catch {} }
     this.voices = [];
     this.noise = null;
     this.running = false;
@@ -201,7 +154,7 @@ let ctx, analyser, engine, workletNode, chunks = [], timer, recording = false, s
 let activePreset = 0;
 let density = PRESETS[0].density;
 let brightness = PRESETS[0].brightness;
-const logLines = ["Engine idle.", "Worklet capture ready."];
+const logLines = ["Engine idle.", "Click Initiate to start audio."];
 
 function log(msg) {
   logLines.unshift(msg);
@@ -214,7 +167,7 @@ async function ensureContext() {
     ctx = new (window.AudioContext || window.webkitAudioContext)();
     analyser = ctx.createAnalyser();
     analyser.fftSize = 512;
-    analyser.smoothingTimeConstant = 0.82;
+    analyser.smoothingTimeConstant = 0.8;
     analyser.connect(ctx.destination);
     engine = new ResonanceEngine(ctx, analyser);
 
@@ -224,13 +177,14 @@ async function ensureContext() {
     URL.revokeObjectURL(url);
   }
   if (ctx.state === "suspended") await ctx.resume();
+  log("AudioContext: " + ctx.state);
 }
 
 async function start() {
   await ensureContext();
   engine.start({ ...PRESETS[activePreset], density, brightness });
   startCapture();
-  log("[Resonance] live");
+  log("[Resonance] live — you should hear tones");
   render();
 }
 
@@ -247,7 +201,6 @@ function startCapture() {
   workletNode = new AudioWorkletNode(ctx, "capture");
   workletNode.port.onmessage = e => { if (e.data) chunks.push(e.data); };
   analyser.connect(workletNode);
-  workletNode.connect(ctx.destination);
   recording = true;
   seconds = 0;
   timer = setInterval(() => { seconds++; render(); }, 1000);
@@ -279,7 +232,6 @@ function selectPreset(i) {
 }
 
 function render() {
-  const p = PRESETS[activePreset];
   app.innerHTML = `
     <div class="w-full max-w-4xl bg-slate-900/90 border border-slate-800 rounded-2xl p-6 flex flex-col gap-6">
       <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
